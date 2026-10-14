@@ -41,7 +41,7 @@ namespace DataLoaderAPI.Repositories
             var csvConfig = new CsvConfiguration(CultureInfo.InvariantCulture)
             {
                 Delimiter = "\t",
-                HasHeaderRecord = false
+                HasHeaderRecord = true
             };
 
             using var csv = new CsvReader(reader, csvConfig);
@@ -109,7 +109,7 @@ namespace DataLoaderAPI.Repositories
             var csvConfig = new CsvConfiguration(CultureInfo.InvariantCulture)
             {
                 Delimiter = "\t",
-                HasHeaderRecord = false
+                HasHeaderRecord = true
             };
 
             using var csv = new CsvReader(reader, csvConfig);

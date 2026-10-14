@@ -57,6 +57,18 @@ namespace DataLoaderAPI.Controllers
             using (var csv = new CsvWriter(writer, csvConfig))
             {
                 csv.Context.RegisterClassMap<WorkItemMap>();
+
+                // Include CSV column headers only on the first page.
+                if (page == 1)
+                {
+                    csv.WriteField("Account Name");
+                    csv.WriteField("Account Number");
+                    csv.WriteField("Brand code");
+                    csv.WriteField("Brand name");
+                    await csv.NextRecordAsync();
+                }
+
+                // Write the actual account records.
                 await csv.WriteRecordsAsync(result.Items);
             }
 
@@ -121,9 +133,20 @@ namespace DataLoaderAPI.Controllers
             using (var csv = new CsvWriter(writer, csvConfig))
             {
                 csv.Context.RegisterClassMap<WorkItemMap>();
+
+                // Include CSV column headers only on the first page.
+                if (page == 1)
+                {
+                    csv.WriteField("Account Name");
+                    csv.WriteField("Account Number");
+                    csv.WriteField("Brand code");
+                    csv.WriteField("Brand name");
+                    await csv.NextRecordAsync();
+                }
+
+                // Write the actual account records.
                 await csv.WriteRecordsAsync(result.Items);
             }
-
             Response.Headers["X-Page"] = result.Page.ToString();
             Response.Headers["X-Page-Size"] = result.PageSize.ToString();
             Response.Headers["X-Total-Count"] = result.TotalCount.ToString();

@@ -1,5 +1,4 @@
-﻿
-using DataLoaderAPI.Models;
+﻿using DataLoaderAPI.Models;
 using DataLoaderAPI.Repositories.Interfaces;
 using DataLoaderAPI.Services.Interfaces;
 
@@ -9,33 +8,18 @@ namespace DataLoaderAPI.Services
     {
         private readonly IWorkItemRepository _workItemRepository;
 
-        public WorkItemService(
-            IWorkItemRepository workItemRepository)
+        public WorkItemService(IWorkItemRepository workItemRepository)
         {
             _workItemRepository = workItemRepository;
         }
 
-        public async Task<PagedResult<WorkItem>> GetAllWorkItemsAsync(
-            int page,
-            int pageSize,
-            string? brandCode,
-            string? brandName)
-        {
-            return await _workItemRepository.GetAllWorkItemsAsync(
-                page,
-                pageSize,
-                brandCode,
-                brandName);
-        }
-
-        
-        public async Task<PagedResult<WorkItem>> GetByAccountNumbersAsync(
-            List<string> accountNumbers,
+        public Task<PagedResult<Dictionary<string, string>>> SearchAsync(
+            Dictionary<string, List<string>> filters,
             int page,
             int pageSize)
         {
-            return await _workItemRepository.GetByAccountNumbersAsync(
-                accountNumbers,
+            return _workItemRepository.SearchAsync(
+                filters,
                 page,
                 pageSize);
         }

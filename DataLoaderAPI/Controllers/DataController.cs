@@ -5,6 +5,7 @@ using DataLoaderAPI.Services.Interfaces;
 using Microsoft.AspNetCore.Mvc;
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 
 namespace DataLoaderAPI.Controllers
 {
@@ -20,80 +21,70 @@ namespace DataLoaderAPI.Controllers
         }
 
         [HttpGet]
-        public async Task<IActionResult> GetAllWorkItemsAsync(
-            [FromQuery] int page = 1,
-            [FromQuery] int pageSize = 200,
-            [FromQuery] string? brandCode = null,
-            [FromQuery] string? brandName = null)
-        {
-            if (page < 1)
-            {
-                return BadRequest("Page must be greater than 0.");
-            }
-
-            if (pageSize < 1)
-            {
-                return BadRequest("Page size must be greater than 0.");
-            }
-
-            var result = await _workItemService.GetAllWorkItemsAsync(
-                page,
-                pageSize,
-                brandCode,
-                brandName);
-
-            using var memoryStream = new MemoryStream();
-
-            var csvConfig = new CsvConfiguration(CultureInfo.InvariantCulture)
-            {
-                Delimiter = ",",
-                HasHeaderRecord = false
-            };
-
-            using (var writer = new StreamWriter(
-                memoryStream,
-                Encoding.UTF8,
-                leaveOpen: true))
-            using (var csv = new CsvWriter(writer, csvConfig))
-            {
-                csv.Context.RegisterClassMap<WorkItemMap>();
-
-                // Include CSV column headers only on the first page.
-                if (page == 1)
-                {
-                    csv.WriteField("Account Name");
-                    csv.WriteField("Account Number");
-                    csv.WriteField("Brand code");
-                    csv.WriteField("Brand name");
-                    await csv.NextRecordAsync();
-                }
-
-                // Write the actual account records.
-                await csv.WriteRecordsAsync(result.Items);
-            }
-
-            Response.Headers["X-Page"] = result.Page.ToString();
-            Response.Headers["X-Page-Size"] = result.PageSize.ToString();
-            Response.Headers["X-Total-Count"] = result.TotalCount.ToString();
-            Response.Headers["X-Has-More"] =
-                result.HasMore.ToString().ToLowerInvariant();
-
-            memoryStream.Position = 0;
-
-            return File(
-                memoryStream.ToArray(),
-                "text/csv",
-                $"work-items-page-{page}.csv");
-        }
-
-
-
-        [HttpPost("search")]
-        public async Task<IActionResult> SearchByAccountNumbers(
-            [FromBody] AccountNumberSearchRequest request,
+        public async Task<IActionResult> Get(
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 200)
         {
+            var filters = new Dictionary<string, List<string>>(
+                StringComparer.OrdinalIgnoreCase);
+
+            foreach (var queryParam in Request.Query)
+            {
+                if (string.Equals(
+                        queryParam.Key, "page",
+                        StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(
+                        queryParam.Key, "pageSize",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var values = queryParam.Value
+                    .Where(value => value != null)
+                    .Select(value => value!)
+                    .ToList();
+
+                filters[queryParam.Key] = values;
+            }
+
+            return await SearchAndReturnCsv(filters, page, pageSize);
+        }
+
+        [HttpPost("search")]
+        public async Task<IActionResult> Search(
+            [FromBody] GenericSearchRequest request,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 200)
+        {
+            var filters = new Dictionary<string, List<string>>(
+                StringComparer.OrdinalIgnoreCase);
+
+            if (request.Filters != null)
+            {
+                foreach (var filter in request.Filters)
+                {
+                    filters[filter.Key] =
+                        ConvertFilterValue(filter.Value);
+                }
+            }
+
+            // Support the existing Salesforce accountNumbers payload.
+            // Use it only when generic filters were not supplied.
+            if (filters.Count == 0
+                && request.AccountNumbers is { Count: > 0 })
+            {
+                filters["Account Number"] = request.AccountNumbers;
+            }
+
+            return await SearchAndReturnCsv(filters, page, pageSize);
+        }
+
+        private async Task<IActionResult> SearchAndReturnCsv(
+            Dictionary<string, List<string>> filters,
+            int page,
+            int pageSize)
+        {
             if (page < 1)
             {
                 return BadRequest("Page must be greater than 0.");
@@ -101,66 +92,145 @@ namespace DataLoaderAPI.Controllers
 
             if (pageSize < 1)
             {
-                return BadRequest("Page size must be greater than 0.");
-            }
-
-            if (request.AccountNumbers == null ||
-                request.AccountNumbers.Count == 0 ||
-                request.AccountNumbers.Any(
-                    x => string.IsNullOrWhiteSpace(x)))
-            {
                 return BadRequest(
-                    "Provide at least one valid account number.");
+                    "Page size must be greater than 0.");
             }
 
-            var result = await _workItemService.GetByAccountNumbersAsync(
-                request.AccountNumbers,
-                page,
-                pageSize);
+            PagedResult<Dictionary<string, string>> result;
 
-            using var memoryStream = new MemoryStream();
+            try
+            {
+                result = await _workItemService.SearchAsync(
+                    filters, page, pageSize);
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(ex.Message);
+            }
 
-            var csvConfig = new CsvConfiguration(CultureInfo.InvariantCulture)
+            Response.Headers["X-Page"] =
+                result.Page.ToString(CultureInfo.InvariantCulture);
+
+            Response.Headers["X-Page-Size"] =
+                result.PageSize.ToString(CultureInfo.InvariantCulture);
+
+            Response.Headers["X-Total-Count"] =
+                result.TotalCount.ToString(CultureInfo.InvariantCulture);
+
+            Response.Headers["X-Has-More"] =
+                result.HasMore.ToString().ToLowerInvariant();
+
+            var csvConfig = new CsvConfiguration(
+                CultureInfo.InvariantCulture)
             {
                 Delimiter = ",",
                 HasHeaderRecord = false
             };
 
-            using (var writer = new StreamWriter(
-                memoryStream,
-                Encoding.UTF8,
-                leaveOpen: true))
+            using var writer = new StringWriter(
+                CultureInfo.InvariantCulture);
+
             using (var csv = new CsvWriter(writer, csvConfig))
             {
-                csv.Context.RegisterClassMap<WorkItemMap>();
-
-                // Include CSV column headers only on the first page.
-                if (page == 1)
+                // Preserve the original behavior: the first page
+                // includes the CSV header row.
+                if (result.Page == 1)
                 {
-                    csv.WriteField("Account Name");
-                    csv.WriteField("Account Number");
-                    csv.WriteField("Brand code");
-                    csv.WriteField("Brand name");
+                    foreach (var header in result.Headers)
+                    {
+                        csv.WriteField(header);
+                    }
+
                     await csv.NextRecordAsync();
                 }
 
-                // Write the actual account records.
-                await csv.WriteRecordsAsync(result.Items);
+                foreach (var record in result.Items)
+                {
+                    foreach (var header in result.Headers)
+                    {
+                        record.TryGetValue(header, out var value);
+                        csv.WriteField(value ?? string.Empty);
+                    }
+
+                    await csv.NextRecordAsync();
+                }
+
+                await csv.FlushAsync();
             }
-            Response.Headers["X-Page"] = result.Page.ToString();
-            Response.Headers["X-Page-Size"] = result.PageSize.ToString();
-            Response.Headers["X-Total-Count"] = result.TotalCount.ToString();
-            Response.Headers["X-Has-More"] =
-                result.HasMore.ToString().ToLowerInvariant();
 
-            memoryStream.Position = 0;
+            var csvContent = writer.ToString();
 
-            return File(
-                memoryStream.ToArray(),
+            return Content(
+                csvContent,
                 "text/csv",
-                $"work-items-page-{page}.csv");
+                Encoding.UTF8);
         }
 
+        private static List<string> ConvertFilterValue(
+            JsonElement element)
+        {
+            var values = new List<string>();
 
+            switch (element.ValueKind)
+            {
+                case JsonValueKind.String:
+                    AddIfNotEmpty(values, element.GetString());
+                    break;
+
+                case JsonValueKind.Number:
+                case JsonValueKind.True:
+                case JsonValueKind.False:
+                    AddIfNotEmpty(values, element.GetRawText());
+                    break;
+
+                case JsonValueKind.Array:
+                    foreach (var item in element.EnumerateArray())
+                    {
+                        switch (item.ValueKind)
+                        {
+                            case JsonValueKind.String:
+                                AddIfNotEmpty(values, item.GetString());
+                                break;
+
+                            case JsonValueKind.Number:
+                            case JsonValueKind.True:
+                            case JsonValueKind.False:
+                                AddIfNotEmpty(
+                                    values, item.GetRawText());
+                                break;
+
+                            case JsonValueKind.Null:
+                                break;
+
+                            default:
+                                throw new ArgumentException(
+                                    "Filter arrays can contain only " +
+                                    "strings, numbers, booleans, or null.");
+                        }
+                    }
+                    break;
+
+                case JsonValueKind.Null:
+                case JsonValueKind.Undefined:
+                    break;
+
+                default:
+                    throw new ArgumentException(
+                        "Filter values must be scalars or arrays " +
+                        "of scalars.");
+            }
+
+            return values;
+        }
+
+        private static void AddIfNotEmpty(
+            List<string> values,
+            string? value)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                values.Add(value.Trim());
+            }
+        }
     }
 }

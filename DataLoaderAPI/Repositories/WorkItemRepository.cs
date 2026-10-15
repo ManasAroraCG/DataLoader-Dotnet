@@ -3,147 +3,196 @@ using CsvHelper;
 using CsvHelper.Configuration;
 using DataLoaderAPI.Models;
 using DataLoaderAPI.Repositories.Interfaces;
-using Microsoft.AspNetCore.Hosting;
 using System.Globalization;
 
 namespace DataLoaderAPI.Repositories
 {
     public class WorkItemRepository : IWorkItemRepository
     {
+        private readonly string _filePath;
 
-        private readonly string _filepath;
-
-        public WorkItemRepository(IConfiguration configuration, IWebHostEnvironment environment)
+        public WorkItemRepository(
+            IConfiguration configuration,
+            IWebHostEnvironment environment)
         {
             var configuredPath = configuration["DataSource:Path"]
-                ?? throw new InvalidOperationException("Missing configuration key 'DataSource:Path'.");
+                ?? throw new InvalidOperationException(
+                    "Missing configuration key 'DataSource:Path'.");
 
-            _filepath = Path.IsPathRooted(configuredPath)
+            _filePath = Path.IsPathRooted(configuredPath)
                 ? configuredPath
-                : Path.Combine(environment.ContentRootPath, configuredPath);
+                : Path.Combine(
+                    environment.ContentRootPath,
+                    configuredPath);
         }
 
-
-        public Task<PagedResult<WorkItem>> GetAllWorkItemsAsync(
-            int page,
-            int pageSize,
-            string? brandCode,
-            string? brandName)
-        {
-            if (!File.Exists(_filepath))
-            {
-                throw new FileNotFoundException(
-                    $"The file {_filepath} does not exist.");
-            }
-
-            using var reader = new StreamReader(_filepath);
-
-            var csvConfig = new CsvConfiguration(CultureInfo.InvariantCulture)
-            {
-                Delimiter = "\t",
-                HasHeaderRecord = true
-            };
-
-            using var csv = new CsvReader(reader, csvConfig);
-
-            csv.Context.RegisterClassMap<WorkItemMap>();
-
-            var records = csv.GetRecords<WorkItem>().ToList();
-
-            // Filter by Brand Code.
-            if (!string.IsNullOrWhiteSpace(brandCode))
-            {
-                records = records
-                    .Where(x => string.Equals(
-                        x.BrandCode?.Trim(),
-                        brandCode.Trim(),
-                        StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-            }
-
-            // Filter by Brand Name.
-            if (!string.IsNullOrWhiteSpace(brandName))
-            {
-                records = records
-                    .Where(x => x.BrandName != null &&
-                        x.BrandName.Contains(
-                            brandName.Trim(),
-                            StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-            }
-
-            // Count records after applying filters.
-            var totalCount = records.Count;
-
-            var items = records
-                .Skip((page - 1) * pageSize)
-                .Take(pageSize)
-                .ToList();
-
-            var hasMore = page * pageSize < totalCount;
-
-            return Task.FromResult(new PagedResult<WorkItem>
-            {
-                Items = items,
-                TotalCount = totalCount,
-                Page = page,
-                PageSize = pageSize,
-                HasMore = hasMore
-            });
-        }
-
-        
-        public Task<PagedResult<WorkItem>> GetByAccountNumbersAsync(
-            List<string> accountNumbers,
+        public Task<PagedResult<Dictionary<string, string>>> SearchAsync(
+            Dictionary<string, List<string>> filters,
             int page,
             int pageSize)
         {
-            if (!File.Exists(_filepath))
+            if (page < 1)
             {
-                throw new FileNotFoundException(
-                    $"The file {_filepath} does not exist.");
+                throw new ArgumentOutOfRangeException(
+                    nameof(page), "Page must be greater than 0.");
             }
 
-            using var reader = new StreamReader(_filepath);
-
-            var csvConfig = new CsvConfiguration(CultureInfo.InvariantCulture)
+            if (pageSize < 1)
             {
-                Delimiter = "\t",
-                HasHeaderRecord = true
+                throw new ArgumentOutOfRangeException(
+                    nameof(pageSize), "Page size must be greater than 0.");
+            }
+
+            if (!File.Exists(_filePath))
+            {
+                throw new FileNotFoundException(
+                    $"The configured data file was not found: {_filePath}");
+            }
+
+            var csvConfig = new CsvConfiguration(
+                CultureInfo.InvariantCulture)
+            {
+                Delimiter = ",",
+                HasHeaderRecord = true,
+                TrimOptions = TrimOptions.Trim,
+                PrepareHeaderForMatch = args => args.Header.Trim()
             };
 
-            using var csv = new CsvReader(reader, csvConfig);
+            List<Dictionary<string, string>> records = new();
+            List<string> headers;
 
-            csv.Context.RegisterClassMap<WorkItemMap>();
+            using (var reader = new StreamReader(_filePath))
+            using (var csv = new CsvReader(reader, csvConfig))
+            {
+                if (!csv.Read())
+                {
+                    throw new InvalidDataException(
+                        "The CSV file is empty.");
+                }
 
-            var requestedNumbers = new HashSet<string>(
-                accountNumbers
-                    .Where(x => !string.IsNullOrWhiteSpace(x))
-                    .Select(x => x.Trim()),
-                StringComparer.OrdinalIgnoreCase);
+                csv.ReadHeader();
 
-            var records = csv.GetRecords<WorkItem>()
-                .Where(x => requestedNumbers.Contains(x.AccountNumber.Trim()))
-                .ToList();
+                headers = csv.HeaderRecord?
+                    .Select(header => header.Trim())
+                    .ToList()
+                    ?? new List<string>();
 
-            var totalCount = records.Count;
+                if (headers.Count == 0)
+                {
+                    throw new InvalidDataException(
+                        "The CSV file does not contain headers.");
+                }
 
-            var items = records
+                if (headers.Distinct(
+                    StringComparer.OrdinalIgnoreCase).Count()
+                    != headers.Count)
+                {
+                    throw new InvalidDataException(
+                        "The CSV file contains duplicate column headers.");
+                }
+
+                // Read every row using the actual CSV headers.
+                while (csv.Read())
+                {
+                    var record = new Dictionary<string, string>(
+                        StringComparer.OrdinalIgnoreCase);
+
+                    for (int i = 0; i < headers.Count; i++)
+                    {
+                        record[headers[i]] =
+                            csv.GetField(i)?.Trim() ?? string.Empty;
+                    }
+
+                    records.Add(record);
+                }
+            }
+
+            // Match incoming filter names to CSV headers.
+            // Ignore spaces and capitalization.
+            var normalizedFilters =
+                new Dictionary<string, List<string>>(
+                    StringComparer.OrdinalIgnoreCase);
+
+            foreach (var filter in filters)
+            {
+                if (string.IsNullOrWhiteSpace(filter.Key))
+                {
+                    throw new ArgumentException(
+                        "Filter field names cannot be empty.");
+                }
+
+                var normalizedFilterName =
+                    NormalizeFieldName(filter.Key);
+
+                var header = headers.FirstOrDefault(
+                    h => NormalizeFieldName(h) == normalizedFilterName);
+
+                if (header == null)
+                {
+                    throw new ArgumentException(
+                        $"Unknown filter field '{filter.Key}'. " +
+                        "Available fields: " +
+                        string.Join(", ", headers));
+                }
+
+                var values = filter.Value?
+                    .Where(value =>
+                        !string.IsNullOrWhiteSpace(value))
+                    .Select(value => value.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList()
+                    ?? new List<string>();
+
+                if (values.Count > 0)
+                {
+                    normalizedFilters[header] = values;
+                }
+            }
+
+            // Different fields use AND.
+            // Multiple values for one field use OR.
+            IEnumerable<Dictionary<string, string>> filtered = records;
+
+            foreach (var filter in normalizedFilters)
+            {
+                var fieldName = filter.Key;
+                var acceptedValues = filter.Value;
+
+                filtered = filtered.Where(record =>
+                    acceptedValues.Any(value =>
+                        string.Equals(
+                            record[fieldName],
+                            value,
+                            StringComparison.OrdinalIgnoreCase)));
+            }
+
+            var matchingRecords = filtered.ToList();
+            var totalCount = matchingRecords.Count;
+
+            var items = matchingRecords
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
                 .ToList();
 
-            var hasMore = page * pageSize < totalCount;
-
-            return Task.FromResult(new PagedResult<WorkItem>
-            {
-                Items = items,
-                TotalCount = totalCount,
-                Page = page,
-                PageSize = pageSize,
-                HasMore = hasMore
-            });
+            return Task.FromResult(
+                new PagedResult<Dictionary<string, string>>
+                {
+                    Items = items,
+                    Headers = headers,
+                    TotalCount = totalCount,
+                    Page = page,
+                    PageSize = pageSize,
+                    HasMore = (long)page * pageSize < totalCount
+                });
         }
 
+        private static string NormalizeFieldName(string fieldName)
+        {
+            return new string(
+                fieldName
+                    .Where(char.IsLetterOrDigit)
+                    .Select(char.ToLowerInvariant)
+                    .ToArray());
+        }
     }
 }

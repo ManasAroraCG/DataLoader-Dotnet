@@ -1,7 +1,7 @@
 Account Name,Account Number,Brand code,Brand name
 Just Energy Account 00001,ACC00000001,JE,Just Energy
 Just Energy Account 00002,ACC00000002,JE,Just Energy
-Just Energy Account 00003,ACC00000003,JE,Just Energy
+Shell Energy Account 00003,ACC00000003,JE,Just Energy
 Pulse Power Account 00004,ACC00000004,PP,Pulse Power
 Just Energy Account 00005,ACC00000005,JE,Just Energy
 Shell Energy Account 00006,ACC00000006,JE,Just Energy
@@ -543,3 +543,4 @@ Pulse Power Account 00541,ACC00000541,PP,Pulse Power
 Just Energy Account 00542,ACC00000542,JE,Just Energy
 Shell Energy Account 00543,ACC00000543,SE,Shell Energy
 Pulse Power Account 00544,ACC00000544,PP,Pulse Power
+Pulse Power Account 00545,ACC00000545,PP,Pulse Power

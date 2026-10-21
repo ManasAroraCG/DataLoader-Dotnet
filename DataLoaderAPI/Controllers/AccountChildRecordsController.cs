@@ -64,7 +64,8 @@ namespace DataLoaderAPI.Controllers
             {
                 if (!await csv.ReadAsync())
                 {
-                    return BadRequest("The child CSV file is empty.");
+                    return BadRequest(
+                        "The child CSV file is empty.");
                 }
 
                 csv.ReadHeader();
@@ -135,15 +136,18 @@ namespace DataLoaderAPI.Controllers
             using (var outputCsv =
                 new CsvWriter(writer, outputConfig))
             {
-                // Include headers on every page so each response
-                // is a self-contained CSV file.
-                foreach (var header in headers)
+                // Return headers only on the first page.
+                if (page == 1)
                 {
-                    outputCsv.WriteField(header);
+                    foreach (var header in headers)
+                    {
+                        outputCsv.WriteField(header);
+                    }
+
+                    await outputCsv.NextRecordAsync();
                 }
 
-                await outputCsv.NextRecordAsync();
-
+                // Return data rows on every page.
                 foreach (var row in pageRecords)
                 {
                     foreach (var value in row)

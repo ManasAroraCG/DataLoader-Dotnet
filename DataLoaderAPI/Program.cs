@@ -2,6 +2,8 @@ using DataLoaderAPI.Repositories;
 using DataLoaderAPI.Repositories.Interfaces;
 using DataLoaderAPI.Services;
 using DataLoaderAPI.Services.Interfaces;
+using Azure.Identity;
+using Azure.Storage.Blobs;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -14,6 +16,19 @@ builder.Services.AddSwaggerGen();
 
 builder.Services.AddScoped<IWorkItemRepository, WorkItemRepository>();
 builder.Services.AddScoped<IWorkItemService, WorkItemService>();
+
+builder.Services.AddSingleton(sp =>
+{
+    var configuration = sp.GetRequiredService<IConfiguration>();
+
+    var serviceUri = configuration["DataSource:BlobServiceUri"]
+        ?? throw new InvalidOperationException(
+            "Missing configuration: DataSource:BlobServiceUri");
+
+    return new BlobServiceClient(
+        new Uri(serviceUri),
+        new DefaultAzureCredential());
+});
 
 var app = builder.Build();
 

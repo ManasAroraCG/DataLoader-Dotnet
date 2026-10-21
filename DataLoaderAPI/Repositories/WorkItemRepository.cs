@@ -1,4 +1,4 @@
-﻿
+﻿using Azure.Storage.Blobs;
 using CsvHelper;
 using CsvHelper.Configuration;
 using DataLoaderAPI.Models;
@@ -9,24 +9,28 @@ namespace DataLoaderAPI.Repositories
 {
     public class WorkItemRepository : IWorkItemRepository
     {
-        private readonly string _filePath;
+        private readonly BlobClient _blobClient;
 
         public WorkItemRepository(
             IConfiguration configuration,
-            IWebHostEnvironment environment)
+            BlobServiceClient blobServiceClient)
         {
-            var configuredPath = configuration["DataSource:Path"]
+            var containerName =
+                configuration["DataSource:ContainerName"]
                 ?? throw new InvalidOperationException(
-                    "Missing configuration key 'DataSource:Path'.");
+                    "Missing configuration: DataSource:ContainerName.");
 
-            _filePath = Path.IsPathRooted(configuredPath)
-                ? configuredPath
-                : Path.Combine(
-                    environment.ContentRootPath,
-                    configuredPath);
+            var blobName =
+                configuration["DataSource:BlobName"]
+                ?? throw new InvalidOperationException(
+                    "Missing configuration: DataSource:BlobName.");
+
+            _blobClient = blobServiceClient
+                .GetBlobContainerClient(containerName)
+                .GetBlobClient(blobName);
         }
 
-        public Task<PagedResult<Dictionary<string, string>>> SearchAsync(
+        public async Task<PagedResult<Dictionary<string, string>>> SearchAsync(
             Dictionary<string, List<string>> filters,
             int page,
             int pageSize)
@@ -43,10 +47,11 @@ namespace DataLoaderAPI.Repositories
                     nameof(pageSize), "Page size must be greater than 0.");
             }
 
-            if (!File.Exists(_filePath))
+            if (!await _blobClient.ExistsAsync())
             {
                 throw new FileNotFoundException(
-                    $"The configured data file was not found: {_filePath}");
+                    $"The configured blob was not found: " +
+                    $"{_blobClient.Name}");
             }
 
             var csvConfig = new CsvConfiguration(
@@ -61,10 +66,12 @@ namespace DataLoaderAPI.Repositories
             List<Dictionary<string, string>> records = new();
             List<string> headers;
 
-            using (var reader = new StreamReader(_filePath))
+            var download = await _blobClient.DownloadStreamingAsync();
+
+            using (var reader = new StreamReader(download.Value.Content))
             using (var csv = new CsvReader(reader, csvConfig))
             {
-                if (!csv.Read())
+                if (!await csv.ReadAsync())
                 {
                     throw new InvalidDataException(
                         "The CSV file is empty.");
@@ -91,8 +98,7 @@ namespace DataLoaderAPI.Repositories
                         "The CSV file contains duplicate column headers.");
                 }
 
-                // Read every row using the actual CSV headers.
-                while (csv.Read())
+                while (await csv.ReadAsync())
                 {
                     var record = new Dictionary<string, string>(
                         StringComparer.OrdinalIgnoreCase);
@@ -107,8 +113,8 @@ namespace DataLoaderAPI.Repositories
                 }
             }
 
-            // Match incoming filter names to CSV headers.
-            // Ignore spaces and capitalization.
+            // Match incoming filter names to CSV headers,
+            // ignoring spaces and capitalization.
             var normalizedFilters =
                 new Dictionary<string, List<string>>(
                     StringComparer.OrdinalIgnoreCase);
@@ -174,16 +180,15 @@ namespace DataLoaderAPI.Repositories
                 .Take(pageSize)
                 .ToList();
 
-            return Task.FromResult(
-                new PagedResult<Dictionary<string, string>>
-                {
-                    Items = items,
-                    Headers = headers,
-                    TotalCount = totalCount,
-                    Page = page,
-                    PageSize = pageSize,
-                    HasMore = (long)page * pageSize < totalCount
-                });
+            return new PagedResult<Dictionary<string, string>>
+            {
+                Items = items,
+                Headers = headers,
+                TotalCount = totalCount,
+                Page = page,
+                PageSize = pageSize,
+                HasMore = (long)page * pageSize < totalCount
+            };
         }
 
         private static string NormalizeFieldName(string fieldName)

@@ -1,12 +1,14 @@
 using Azure.Storage.Blobs;
 using CsvHelper;
 using CsvHelper.Configuration;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Globalization;
 using System.Text;
 
 namespace DataLoaderAPI.Controllers
 {
+    [Authorize]
     [ApiController]
     [Route("api/[controller]")]
     public class AccountChildRecordsController : ControllerBase

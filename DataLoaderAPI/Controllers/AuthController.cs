@@ -17,26 +17,27 @@ namespace DataLoaderAPI.Controllers
             _configuration = configuration;
         }
 
-        public class TokenRequest
-        {
-            public string ClientId { get; set; } = string.Empty;
-            public string ClientSecret { get; set; } = string.Empty;
-        }
+        // public class TokenRequest
+        // {
+        //     public string ClientId { get; set; } = string.Empty;
+        //     public string ClientSecret { get; set; } = string.Empty;
+        // }
 
         [HttpPost("token")]
-        public IActionResult GenerateToken([FromBody] TokenRequest request)
+        public IActionResult GenerateToken()
         {
+            // excepts both from json and data
             var clientId = Request.Form["client_id"].FirstOrDefault();
             var clientSecret = Request.Form["client_secret"].FirstOrDefault();
 
-            if (string.IsNullOrEmpty(clientId)){}
+            // if (string.IsNullOrEmpty(clientId)){}
 
             var jwtSettings = _configuration.GetSection("JwtSettings");
             var validClientId = jwtSettings["ClientId"];
             var validClientSecret = jwtSettings["ClientSecret"];
 
             // 1. Validate the credentials provided by Salesforce
-            if (clientId != validClientId || clientSecret != validClientSecret)
+            if (string.IsNullOrEmpty(clientId) || clientId != validClientId || string.IsNullOrEmpty(clientSecret) || clientSecret != validClientSecret)
             {
                 return Unauthorized(new { error = "invalid_client", error_description = "Invalid credentials" });
             }
@@ -47,7 +48,7 @@ namespace DataLoaderAPI.Controllers
 
             var claims = new[]
             {
-                new Claim(JwtRegisteredClaimNames.Sub, request.ClientId),
+                new Claim(JwtRegisteredClaimNames.Sub, clientId),
                 new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
             };
 

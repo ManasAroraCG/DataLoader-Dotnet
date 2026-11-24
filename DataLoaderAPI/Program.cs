@@ -72,10 +72,7 @@ app.UseHttpsRedirection();
 
 // Enabling Authentication Middleware
 app.UseAuthentication();
-
-
 app.UseAuthorization();
 
 app.MapControllers();
-
 app.Run();

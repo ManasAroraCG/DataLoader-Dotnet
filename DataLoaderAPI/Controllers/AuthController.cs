@@ -26,14 +26,19 @@ namespace DataLoaderAPI.Controllers
         [HttpPost("token")]
         public IActionResult GenerateToken([FromBody] TokenRequest request)
         {
+            var clientId = Request.Form["client_id"].FirstOrDefault();
+            var clientSecret = Request.Form["client_secret"].FirstOrDefault();
+
+            if (string.IsNullOrEmpty(clientId)){}
+
             var jwtSettings = _configuration.GetSection("JwtSettings");
             var validClientId = jwtSettings["ClientId"];
             var validClientSecret = jwtSettings["ClientSecret"];
 
             // 1. Validate the credentials provided by Salesforce
-            if (request.ClientId != validClientId || request.ClientSecret != validClientSecret)
+            if (clientId != validClientId || clientSecret != validClientSecret)
             {
-                return Unauthorized("Invalid Client ID or Client Secret.");
+                return Unauthorized(new { error = "invalid_client", error_description = "Invalid credentials" });
             }
 
             // 2. Generate the JWT
